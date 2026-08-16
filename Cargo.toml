@@ -1,0 +1,23 @@
+[package]
+name = "zzz-drive-exporter"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+readme = "README.md"
+description = "Capture Zenless Zone Zero drive discs and export optimizer-compatible ZOOD JSON"
+repository = "https://github.com/Treageer/zzz-drive-exporter"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4.5", features = ["derive"] }
+futures = "0.3"
+hex = "0.4"
+kcp = { git = "https://github.com/hashblen/mhy-kcp", rev = "1acf4ba5938ff91f7f2d2a31e16bf1f8d2db9c8f" }
+pktmon = { version = "0.6.2", features = ["tokio"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

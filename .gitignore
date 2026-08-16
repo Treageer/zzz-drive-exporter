@@ -1,0 +1,6 @@
+/target/
+/captures/
+/exports/
+/dist/
+*.pdb
+*.log
