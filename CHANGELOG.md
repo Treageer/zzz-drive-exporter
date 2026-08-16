@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-08-16
 
 - Capture ZZZ gateway UDP traffic through Windows `pktmon` with a port-level filter.
 - Stop automatically after a complete CN 3.1.0 drive-disc response is reassembled.
