@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use chrono::Local;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use zzz_drive_exporter::{ExporterOutcome, capture_until_current_equip, process_exporter_capture};
@@ -13,7 +12,7 @@ use zzz_drive_exporter::{ExporterOutcome, capture_until_current_equip, process_e
 #[command(
     author,
     version,
-    about = "Capture ZZZ drive discs and export optimizer-compatible ZOOD JSON"
+    about = "Capture ZZZ drive discs and export ZOOD and zzz_calculator JSON"
 )]
 struct Cli {
     /// Process an existing capture instead of starting a live capture.
@@ -28,11 +27,15 @@ struct Cli {
     #[arg(long, default_value = "captures")]
     capture_root: PathBuf,
 
-    /// ZOOD JSON output path. Defaults to exports/zzz-drives-<time>.json.
+    /// ZOOD v1 output path. Defaults to exports/zzz-drives-zood-v1.json.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Replace an existing output file.
+    /// zzz_calculator v1 output path. Defaults to exports/zzz-drives-zzz-calculator-v1.json.
+    #[arg(long)]
+    calculator_output: Option<PathBuf>,
+
+    /// Replace existing custom output files.
     #[arg(long)]
     force: bool,
 }
@@ -46,21 +49,23 @@ async fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
 
-    let output = cli.output.unwrap_or_else(|| {
-        PathBuf::from("exports").join(
-            Local::now()
-                .format("zzz-drives-%Y%m%d-%H%M%S.json")
-                .to_string(),
-        )
-    });
-
+    let replace_zood = cli.force || cli.output.is_none();
+    let replace_calculator = cli.force || cli.calculator_output.is_none();
+    let zood_output = cli
+        .output
+        .unwrap_or_else(|| PathBuf::from("exports").join("zzz-drives-zood-v1.json"));
+    let calculator_output = cli
+        .calculator_output
+        .unwrap_or_else(|| PathBuf::from("exports").join("zzz-drives-zzz-calculator-v1.json"));
     if let Some(run_dir) = cli.from_capture {
         let outcome = process_capture(
             &run_dir,
             &cli.capture_root,
             cli.baseline.as_deref(),
-            &output,
-            cli.force,
+            &zood_output,
+            &calculator_output,
+            replace_zood,
+            replace_calculator,
         )?;
         print_outcome(outcome);
         return Ok(());
@@ -73,12 +78,15 @@ async fn main() -> Result<()> {
         &first_capture,
         &cli.capture_root,
         cli.baseline.as_deref(),
-        &output,
-        cli.force,
+        &zood_output,
+        &calculator_output,
+        replace_zood,
+        replace_calculator,
     )?;
 
     match first_outcome {
-        exported @ ExporterOutcome::Exported { .. } => print_outcome(exported),
+        exported @ (ExporterOutcome::ExportedSingleSession { .. }
+        | ExporterOutcome::ExportedPaired { .. }) => print_outcome(exported),
         ExporterOutcome::NeedsSecondSession {
             capture,
             attempted_baselines,
@@ -98,11 +106,14 @@ async fn main() -> Result<()> {
                 &second_capture,
                 &cli.capture_root,
                 Some(&first_capture),
-                &output,
-                cli.force,
+                &zood_output,
+                &calculator_output,
+                replace_zood,
+                replace_calculator,
             )?;
             match second_outcome {
-                exported @ ExporterOutcome::Exported { .. } => print_outcome(exported),
+                exported @ (ExporterOutcome::ExportedSingleSession { .. }
+                | ExporterOutcome::ExportedPaired { .. }) => print_outcome(exported),
                 ExporterOutcome::NeedsSecondSession { .. } => {
                     anyhow::bail!("两轮抓包无法配对；请确认两次登录之间驱动盘库存完全未改变");
                 }
@@ -116,27 +127,52 @@ fn process_capture(
     run_dir: &Path,
     capture_root: &Path,
     baseline: Option<&Path>,
-    output: &Path,
-    force: bool,
+    zood_output: &Path,
+    calculator_output: &Path,
+    replace_zood: bool,
+    replace_calculator: bool,
 ) -> Result<ExporterOutcome> {
-    process_exporter_capture(run_dir, capture_root, baseline, output, force)
-        .with_context(|| format!("processing capture {}", run_dir.display()))
+    process_exporter_capture(
+        run_dir,
+        capture_root,
+        baseline,
+        zood_output,
+        calculator_output,
+        replace_zood,
+        replace_calculator,
+    )
+    .with_context(|| format!("processing capture {}", run_dir.display()))
 }
 
 fn print_outcome(outcome: ExporterOutcome) {
     match outcome {
-        ExporterOutcome::Exported {
+        ExporterOutcome::ExportedSingleSession {
+            capture,
+            equip_json,
+            zood_json,
+            calculator_json,
+            disc_count,
+        } => {
+            println!("\n完成：单次抓包恢复并导出 {disc_count} 个驱动盘。");
+            println!("本次抓包：{}", capture.display());
+            println!("原始解析：{}", equip_json.display());
+            println!("ZOOD v1：{}", zood_json.display());
+            println!("zzz_calculator v1：{}", calculator_json.display());
+        }
+        ExporterOutcome::ExportedPaired {
             capture,
             baseline,
             equip_json,
             zood_json,
+            calculator_json,
             disc_count,
         } => {
             println!("\n完成：已导出 {disc_count} 个驱动盘。");
             println!("本次抓包：{}", capture.display());
-            println!("配对会话：{}", baseline.display());
+            println!("配对会话（回退路径）：{}", baseline.display());
             println!("原始解析：{}", equip_json.display());
-            println!("优化器文件：{}", zood_json.display());
+            println!("ZOOD v1：{}", zood_json.display());
+            println!("zzz_calculator v1：{}", calculator_json.display());
         }
         ExporterOutcome::NeedsSecondSession {
             capture,

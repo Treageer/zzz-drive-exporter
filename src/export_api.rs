@@ -1,10 +1,18 @@
 #[derive(Debug)]
 pub enum ExporterOutcome {
-    Exported {
+    ExportedSingleSession {
+        capture: PathBuf,
+        equip_json: PathBuf,
+        zood_json: PathBuf,
+        calculator_json: PathBuf,
+        disc_count: usize,
+    },
+    ExportedPaired {
         capture: PathBuf,
         baseline: PathBuf,
         equip_json: PathBuf,
         zood_json: PathBuf,
+        calculator_json: PathBuf,
         disc_count: usize,
     },
     NeedsSecondSession {
@@ -226,15 +234,35 @@ pub fn prepare_exporter_capture(run_dir: &Path) -> Result<()> {
 }
 
 /// Recover the current session pad from a compatible earlier session, decode the
-/// equipment response, and write a strict ZOOD v1 document.
+/// equipment response, and write strict ZOOD v1 and zzz_calculator v1 documents.
 pub fn process_exporter_capture(
     run_dir: &Path,
     capture_root: &Path,
     explicit_baseline: Option<&Path>,
     zood_output: &Path,
-    force: bool,
+    calculator_output: &Path,
+    replace_zood: bool,
+    replace_calculator: bool,
 ) -> Result<ExporterOutcome> {
     prepare_exporter_capture(run_dir)?;
+    if explicit_baseline.is_none()
+        && let Ok((_pad_path, equip_json, disc_count)) = single_session_export(
+            run_dir,
+            zood_output,
+            calculator_output,
+            replace_zood,
+            replace_calculator,
+        )
+    {
+            return Ok(ExporterOutcome::ExportedSingleSession {
+                capture: run_dir.to_path_buf(),
+                equip_json,
+                zood_json: zood_output.to_path_buf(),
+                calculator_json: calculator_output.to_path_buf(),
+                disc_count,
+            });
+    }
+
     let candidates = baseline_candidates(run_dir, capture_root, explicit_baseline)?;
     let attempted_baselines = candidates.len();
 
@@ -291,12 +319,19 @@ pub fn process_exporter_capture(
             output: Some(equip_json.clone()),
             force: true,
         })?;
-        let disc_count = export_zood_from_equip(&equip_json, zood_output, force)?;
-        return Ok(ExporterOutcome::Exported {
+        let disc_count = export_formats_from_equip(
+            &equip_json,
+            zood_output,
+            calculator_output,
+            replace_zood,
+            replace_calculator,
+        )?;
+        return Ok(ExporterOutcome::ExportedPaired {
             capture: run_dir.to_path_buf(),
             baseline,
             equip_json,
             zood_json: zood_output.to_path_buf(),
+            calculator_json: calculator_output.to_path_buf(),
             disc_count,
         });
     }
@@ -305,6 +340,69 @@ pub fn process_exporter_capture(
         capture: run_dir.to_path_buf(),
         attempted_baselines,
     })
+}
+
+fn single_session_export(
+    run_dir: &Path,
+    zood_output: &Path,
+    calculator_output: &Path,
+    replace_zood: bool,
+    replace_calculator: bool,
+) -> Result<(PathBuf, PathBuf, usize)> {
+    let commands_dir = run_dir.join("extracted").join("commands");
+    let manifest = commands_dir.join("commands.jsonl");
+    let rows = read_command_manifest_rows(&manifest)?;
+    let pad_dir = run_dir.join("extracted").join("exporter-pads");
+    let pad_path = pad_dir.join(format!("session_xorpad_{}.bin", run_dir_name(run_dir)));
+    let mut recovered = false;
+    for (prior, command, schema) in [
+        (single_pad::EquipPrior::cn30(), 0x1E40_u16, EQUIP_SCHEMAS[0]),
+        (single_pad::EquipPrior::cn31(), 0x11B0_u16, EQUIP_SCHEMAS[1]),
+        (single_pad::EquipPrior::cn32(), 0x0F5D_u16, EQUIP_SCHEMAS[2]),
+    ] {
+        let Some(row) = rows
+            .iter()
+            .filter(|row| row.command_id == command && row.body_len >= 8192)
+            .max_by_key(|row| row.body_len)
+        else {
+            continue;
+        };
+        let cipher = fs::read(commands_dir.join(&row.body_file))?;
+        let evidence = match single_pad::recover_single_pad(&cipher, &prior, 4) {
+            Ok(evidence) => evidence,
+            Err(_) => continue,
+        };
+        let recurrence = session_pad::check_pad_recurrence(&evidence.pad, true);
+        if recurrence.hits != recurrence.total {
+            continue;
+        }
+        let plain = xor_with_pad(&cipher, &evidence.pad);
+        if parse_get_equip_data_sc_rsp(&plain, &schema).is_err() {
+            continue;
+        }
+        fs::create_dir_all(&pad_dir)?;
+        fs::write(&pad_path, evidence.pad)?;
+        recovered = true;
+        break;
+    }
+    if !recovered {
+        bail!("single-session statistical recovery did not validate");
+    }
+    let equip_json = commands_dir.join("equip.json");
+    decode_equip(DecodeEquipArgs {
+        run_dir: run_dir.to_path_buf(),
+        xorpad: Some(pad_path.clone()),
+        output: Some(equip_json.clone()),
+        force: true,
+    })?;
+    let disc_count = export_formats_from_equip(
+        &equip_json,
+        zood_output,
+        calculator_output,
+        replace_zood,
+        replace_calculator,
+    )?;
+    Ok((pad_path, equip_json, disc_count))
 }
 
 fn baseline_candidates(
@@ -342,13 +440,19 @@ fn baseline_candidates(
     Ok(candidates)
 }
 
-pub fn export_zood_from_equip(equip_json: &Path, output: &Path, force: bool) -> Result<usize> {
-    if output.exists() && !force {
-        bail!(
-            "{} already exists; pass --force to replace it",
-            output.display()
-        );
+pub fn export_formats_from_equip(
+    equip_json: &Path,
+    zood_output: &Path,
+    calculator_output: &Path,
+    replace_zood: bool,
+    replace_calculator: bool,
+) -> Result<usize> {
+    if zood_output == calculator_output {
+        bail!("ZOOD and zzz_calculator outputs must use different paths");
     }
+    ensure_output_available(zood_output, replace_zood)?;
+    ensure_output_available(calculator_output, replace_calculator)?;
+
     let data: Value = serde_json::from_slice(
         &fs::read(equip_json).with_context(|| format!("reading {}", equip_json.display()))?,
     )?;
@@ -362,25 +466,65 @@ pub fn export_zood_from_equip(equip_json: &Path, output: &Path, force: bool) -> 
 
     let set_map: Value =
         serde_json::from_str(include_str!("../resources/zzz_cn31_disc_sets.json"))?;
+    validate_record_ids(records)?;
+    let zood = build_zood(records, &set_map)?;
+    let calculator = build_zzz_calculator(records, &set_map)?;
+    write_pretty_json(zood_output, &zood)?;
+    write_pretty_json(calculator_output, &calculator)?;
+    Ok(records.len())
+}
+
+pub fn export_zood_from_equip(equip_json: &Path, output: &Path, force: bool) -> Result<usize> {
+    ensure_output_available(output, force)?;
+    let data: Value = serde_json::from_slice(
+        &fs::read(equip_json).with_context(|| format!("reading {}", equip_json.display()))?,
+    )?;
+    let records = data
+        .get("equip_list")
+        .and_then(Value::as_array)
+        .context("equip.json has no equip_list array")?;
+    if records.is_empty() {
+        bail!("equip.json contains no drive discs");
+    }
+    let set_map: Value =
+        serde_json::from_str(include_str!("../resources/zzz_cn31_disc_sets.json"))?;
+    validate_record_ids(records)?;
+    let zood = build_zood(records, &set_map)?;
+    write_pretty_json(output, &zood)?;
+    Ok(records.len())
+}
+
+fn ensure_output_available(output: &Path, force: bool) -> Result<()> {
+    if output.exists() && !force {
+        bail!(
+            "{} already exists; pass --force to replace it",
+            output.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_record_ids(records: &[Value]) -> Result<()> {
     let mut ids = BTreeSet::new();
-    let mut discs = Vec::with_capacity(records.len());
     for record in records {
         let uid = json_u64(record, "uid")?;
         if uid == 0 || !ids.insert(uid) {
             bail!("zero or duplicate drive-disc UID {uid}");
         }
+    }
+    Ok(())
+}
+
+fn build_zood(records: &[Value], set_map: &Value) -> Result<Value> {
+    let mut discs = Vec::with_capacity(records.len());
+    for record in records {
+        let uid = json_u64(record, "uid")?;
         let suit_id = json_u64(record, "suit_id")?;
-        let set_key = set_map
-            .get(suit_id.to_string())
+        let set_key = set_entry(set_map, suit_id)?
             .and_then(|entry| entry.get("setKey"))
             .and_then(Value::as_str)
             .with_context(|| format!("no optimizer setKey mapping for suit {suit_id}"))?;
-        let rarity = match json_u64(record, "rarity")? {
-            4 => "S",
-            3 => "A",
-            2 => "B",
-            value => bail!("unsupported drive-disc rarity {value} for UID {uid}"),
-        };
+        let (rarity, _) = calculator_rarity(json_u64(record, "rarity")?, uid)?;
         let main = record
             .get("main_property")
             .and_then(Value::as_object)
@@ -425,16 +569,140 @@ pub fn export_zood_from_equip(equip_json: &Path, output: &Path, force: bool) -> 
         "source": "zzz-drive-exporter",
         "discs": discs,
     });
+    Ok(result)
+}
+
+fn build_zzz_calculator(records: &[Value], set_map: &Value) -> Result<Value> {
+    let mut discs = Vec::with_capacity(records.len());
+    for record in records {
+        let uid = json_u64(record, "uid")?;
+        let suit_id = json_u64(record, "suit_id")?;
+        let set = set_entry(set_map, suit_id)?;
+        let set_name = set
+            .and_then(|entry| entry.get("nameZh"))
+            .and_then(Value::as_str)
+            .with_context(|| format!("no Chinese set-name mapping for suit {suit_id}"))?;
+        let set_id = set
+            .and_then(|entry| entry.get("calculatorSetId"))
+            .and_then(Value::as_str)
+            .with_context(|| format!("no zzz_calculator set ID mapping for suit {suit_id}"))?;
+        let rarity_raw = json_u64(record, "rarity")?;
+        let (rarity, max_level) = calculator_rarity(rarity_raw, uid)?;
+        let level = json_u64(record, "level")?;
+        if level > max_level {
+            bail!("drive-disc UID {uid} level {level} exceeds {rarity}-rank maximum {max_level}");
+        }
+        let main = record
+            .get("main_property")
+            .and_then(Value::as_object)
+            .with_context(|| format!("UID {uid} has no main_property"))?;
+        let main_key = main
+            .get("key")
+            .and_then(Value::as_u64)
+            .with_context(|| format!("UID {uid} main_property has no key"))?;
+        let (main_stat, main_mode, main_is_percent) = calculator_property(main_key)?;
+        let main_base = main
+            .get("base_value")
+            .and_then(Value::as_u64)
+            .with_context(|| format!("UID {uid} main_property has no base_value"))?;
+        let main_raw = scaled_main_value(main_base, level, max_level)?;
+
+        let mut substats = Vec::new();
+        for substat in record
+            .get("sub_properties")
+            .and_then(Value::as_array)
+            .with_context(|| format!("UID {uid} has no sub_properties array"))?
+        {
+            let key = json_u64(substat, "key")?;
+            let (stat, mode, is_percent) = calculator_property(key)?;
+            let base = json_u64(substat, "base_value")?;
+            let count = json_u64(substat, "count")?;
+            if !(1..=6).contains(&count) {
+                bail!("UID {uid} has invalid substat roll count {count}");
+            }
+            let raw = base
+                .checked_mul(count)
+                .with_context(|| format!("UID {uid} substat value overflow"))?;
+            substats.push(json!({
+                "stat": stat,
+                "mode": mode,
+                "value": calculator_value(raw, is_percent),
+            }));
+        }
+
+        discs.push(json!({
+            "id": uid.to_string(),
+            "setId": set_id,
+            "setName": set_name,
+            "partition": json_u64(record, "slot")?,
+            "rarity": rarity,
+            "level": level,
+            "maxLevel": max_level,
+            "locked": record.get("lock").and_then(Value::as_bool).unwrap_or(false),
+            "equippedBy": Value::Null,
+            "mainStat": {
+                "stat": main_stat,
+                "mode": main_mode,
+                "value": calculator_value(main_raw, main_is_percent),
+            },
+            "subStats": substats,
+        }));
+    }
+
+    Ok(json!({
+        "format": "zzz-calculator-drive-disc-export",
+        "version": 1,
+        "exportedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "sourceAccount": { "label": "zzz-drive-exporter" },
+        "driveDiscs": discs,
+    }))
+}
+
+fn set_entry(set_map: &Value, suit_id: u64) -> Result<Option<&Value>> {
+    Ok(set_map.get(suit_id.to_string()))
+}
+
+fn calculator_rarity(rarity: u64, uid: u64) -> Result<(&'static str, u64)> {
+    match rarity {
+        4 => Ok(("S", 15)),
+        3 => Ok(("A", 12)),
+        2 => Ok(("B", 9)),
+        value => bail!("unsupported drive-disc rarity {value} for UID {uid}"),
+    }
+}
+
+fn scaled_main_value(base: u64, level: u64, max_level: u64) -> Result<u64> {
+    let rate = level
+        .checked_mul(30_000)
+        .and_then(|value| value.checked_add(max_level / 2))
+        .context("main-stat level rate overflow")?
+        / max_level;
+    base.checked_mul(10_000 + rate)
+        .context("main-stat value overflow")
+        .map(|value| value / 10_000)
+}
+
+fn calculator_value(raw: u64, is_percent: bool) -> Value {
+    if !is_percent {
+        return json!(raw);
+    }
+    if raw.is_multiple_of(100) {
+        return json!(raw / 100);
+    }
+    json!(raw as f64 / 100.0)
+}
+
+fn write_pretty_json(output: &Path, value: &Value) -> Result<()> {
     if let Some(parent) = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         fs::create_dir_all(parent)?;
     }
-    let mut encoded = serde_json::to_string_pretty(&result)?;
+    let mut encoded = serde_json::to_string_pretty(value)?;
     encoded.push('\n');
-    fs::write(output, encoded)?;
-    Ok(records.len())
+    fs::write(output, encoded).with_context(|| format!("writing {}", output.display()))?;
+    Ok(())
 }
 
 fn json_u64(value: &Value, key: &str) -> Result<u64> {
@@ -457,26 +725,142 @@ fn optimizer_property_key(key: u64) -> Result<&'static str> {
         21103 => Ok("crit_dmg_"),
         23103 => Ok("pen_"),
         23203 => Ok("pen"),
-        30402 => Ok("anomMas_"),
         30502 => Ok("enerRegen_"),
         31203 => Ok("anomProf"),
-        31402 => Ok("physical_dmg_"),
-        31503 => Ok("fire_dmg_"),
-        31603 | 31903 => Ok("ice_dmg_"),
-        31703 => Ok("electric_dmg_"),
-        31803 | 32303 => Ok("ether_dmg_"),
+        31402 => Ok("anomMas_"),
+        31503 => Ok("physical_dmg_"),
+        31603 => Ok("fire_dmg_"),
+        31703 => Ok("ice_dmg_"),
+        31803 => Ok("electric_dmg_"),
+        31903 => Ok("ether_dmg_"),
+        32303 => Ok("wind_dmg_"),
         _ => bail!("unknown optimizer property key {key}"),
+    }
+}
+
+fn calculator_property(key: u64) -> Result<(&'static str, &'static str, bool)> {
+    match key {
+        11102 => Ok(("hpPct", "pct", true)),
+        11103 => Ok(("hpFlat", "flat", false)),
+        12102 => Ok(("atkPct", "pct", true)),
+        12103 => Ok(("atkFlat", "flat", false)),
+        12202 => Ok(("impact", "pct", true)),
+        13102 => Ok(("defPct", "pct", true)),
+        13103 => Ok(("defFlat", "flat", false)),
+        20103 => Ok(("critRate", "pct", true)),
+        21103 => Ok(("critDmg", "pct", true)),
+        23103 => Ok(("penRatio", "pct", true)),
+        23203 => Ok(("penFlat", "flat", false)),
+        30502 => Ok(("energyRegen", "pct", true)),
+        31203 => Ok(("anomalyProficiency", "flat", false)),
+        31402 => Ok(("anomalyMastery", "pct", true)),
+        31503 => Ok(("physicalDmg", "pct", true)),
+        31603 => Ok(("fireDmg", "pct", true)),
+        31703 => Ok(("iceDmg", "pct", true)),
+        31803 => Ok(("electricDmg", "pct", true)),
+        31903 => Ok(("etherDmg", "pct", true)),
+        32303 => Ok(("windDmg", "pct", true)),
+        _ => bail!("unknown zzz_calculator property key {key}"),
     }
 }
 
 #[cfg(test)]
 mod exporter_tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn maps_current_property_keys() {
         assert_eq!(optimizer_property_key(20103).unwrap(), "crit_");
-        assert_eq!(optimizer_property_key(31903).unwrap(), "ice_dmg_");
+        assert_eq!(optimizer_property_key(31402).unwrap(), "anomMas_");
+        assert_eq!(optimizer_property_key(31503).unwrap(), "physical_dmg_");
+        assert_eq!(optimizer_property_key(31903).unwrap(), "ether_dmg_");
+        assert_eq!(optimizer_property_key(32303).unwrap(), "wind_dmg_");
         assert!(optimizer_property_key(99999).is_err());
+    }
+
+    #[test]
+    fn converts_calculator_stats_and_main_stat_growth() {
+        assert_eq!(calculator_property(31402).unwrap(), ("anomalyMastery", "pct", true));
+        assert_eq!(calculator_property(32303).unwrap(), ("windDmg", "pct", true));
+        assert_eq!(scaled_main_value(550, 15, 15).unwrap(), 2200);
+        assert_eq!(scaled_main_value(79, 15, 15).unwrap(), 316);
+        assert_eq!(scaled_main_value(46, 4, 15).unwrap(), 82);
+        assert_eq!(calculator_value(480, true), json!(4.8));
+        assert_eq!(calculator_value(38, false), json!(38));
+    }
+
+    #[test]
+    fn exports_zood_and_zzz_calculator_documents_together() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "zzz-drive-exporter-dual-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let equip_path = temp_dir.join("equip.json");
+        let zood_path = temp_dir.join("zzz-drives-zood-v1.json");
+        let calculator_path = temp_dir.join("zzz-drives-zzz-calculator-v1.json");
+        let equip = json!({
+            "equip_list": [
+                {
+                    "uid": 42,
+                    "suit_id": 34100,
+                    "rarity": 4,
+                    "slot": 6,
+                    "level": 15,
+                    "lock": true,
+                    "main_property": { "key": 31402, "base_value": 750, "count": 1 },
+                    "sub_properties": [
+                        { "key": 20103, "base_value": 240, "count": 2 }
+                    ]
+                },
+                {
+                    "uid": 43,
+                    "suit_id": 34200,
+                    "rarity": 4,
+                    "slot": 5,
+                    "level": 0,
+                    "lock": false,
+                    "main_property": { "key": 32303, "base_value": 750, "count": 1 },
+                    "sub_properties": [
+                        { "key": 12103, "base_value": 19, "count": 2 }
+                    ]
+                }
+            ]
+        });
+        fs::write(&equip_path, serde_json::to_vec(&equip).unwrap()).unwrap();
+
+        let count = export_formats_from_equip(
+            &equip_path,
+            &zood_path,
+            &calculator_path,
+            false,
+            false,
+        )
+        .unwrap();
+        let zood: Value = serde_json::from_slice(&fs::read(&zood_path).unwrap()).unwrap();
+        let calculator: Value =
+            serde_json::from_slice(&fs::read(&calculator_path).unwrap()).unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(zood["format"], "ZOOD");
+        assert_eq!(zood["version"], 1);
+        assert_eq!(zood["discs"][0]["mainStatKey"], "anomMas_");
+        assert_eq!(zood["discs"][1]["mainStatKey"], "wind_dmg_");
+        assert_eq!(calculator["format"], "zzz-calculator-drive-disc-export");
+        assert_eq!(calculator["version"], 1);
+        assert_eq!(calculator["driveDiscs"][0]["setName"], "谶羽之誓");
+        assert_eq!(calculator["driveDiscs"][0]["setId"], "zzz_wiki_2116");
+        assert_eq!(calculator["driveDiscs"][0]["mainStat"]["stat"], "anomalyMastery");
+        assert_eq!(calculator["driveDiscs"][0]["mainStat"]["value"], 30);
+        assert_eq!(calculator["driveDiscs"][0]["subStats"][0]["value"], 4.8);
+        assert_eq!(calculator["driveDiscs"][1]["mainStat"]["stat"], "windDmg");
+        assert_eq!(calculator["driveDiscs"][1]["mainStat"]["value"], 7.5);
+
+        fs::remove_dir_all(temp_dir).unwrap();
     }
 }

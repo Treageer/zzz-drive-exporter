@@ -1,10 +1,10 @@
 [package]
 name = "zzz-drive-exporter"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 readme = "README.md"
-description = "Capture Zenless Zone Zero drive discs and export optimizer-compatible ZOOD JSON"
+description = "Capture Zenless Zone Zero drive discs and export ZOOD and zzz_calculator JSON"
 repository = "https://github.com/Treageer/zzz-drive-exporter"
 publish = false
 

@@ -177,6 +177,10 @@ pub fn check_recurrence(diff: &[u8; PAD_LEN], big_endian: bool) -> RecurrenceChe
     }
 }
 
+pub fn check_pad_recurrence(pad: &[u8; PAD_LEN], big_endian: bool) -> RecurrenceCheck {
+    check_recurrence(pad, big_endian)
+}
+
 /// Invert `x -> x ^ (x >> 62)`.
 fn undo_shift_xor(a: u64) -> u64 {
     let mut x = a & !3;

@@ -1,31 +1,64 @@
-# zzz-drive-exporter v0.1.0
+# v0.2.0 — 绝区零 CN 3.2 单次登录抓包与双格式导出
 
-First public release targeting the Chinese PC client `CNPRODWin3.1.0`.
+## 本次更新
 
-## Features
+- 支持国服 PC `CNPRODWin3.2.0` 驱动盘响应 `0x0F5D`。
+- 默认先尝试从一次完整登录抓包恢复会话 pad，通过 MT19937-64 递推校验与 protobuf/库存解析后导出。
+- 单次恢复失败时，保留历史双会话配对回退；回退使用的两次登录需保持同账号、同版本、库存及状态不变。
+- 一次解析生成两种格式：
+  - `zzz-drives-zood-v1.json`：供 Zenless Optimizer 使用的 ZOOD v1。
+  - `zzz-drives-zzz-calculator-v1.json`：zzz_calculator 原生导出格式 v1。
+- 修正异常掌控以及物理、火、冰、电、以太、风属性主词条映射。
+- 默认导出文件名固定，后续成功导出会覆盖上次快照，请自行备份。
 
-- Passively captures only the ZZZ gateway UDP port through Windows `pktmon`.
-- Automatically stops after the complete drive-disc response is reassembled.
-- Guides the user through the required two-login workflow when no compatible baseline exists.
-- Recovers the per-login MT19937-64 session pad and validates it against both sessions.
-- Exports optimizer-compatible `ZOOD v1` JSON with 3.1 drive-disc set mappings.
+## 已确认的实测范围
 
-## Requirements
+2026 年 10 月 18 日（Asia/Shanghai），用户手动完成一次登录抓包：
 
-- Windows 10 or Windows 11.
-- Run from an Administrator PowerShell.
-- Keep the drive-disc inventory unchanged between the two login captures.
+- 完整驱动盘响应：`0x0F5D`，加密正文 **145,929 字节**。
+- 重组 **39 条消息**后自动停止抓包。
+- 程序明确报告 **单次抓包恢复并导出 2,321 个驱动盘**，没有使用双会话回退。
+- 原始解析及两份导出文件均包含 **2,321 条记录**。
 
-## Privacy
+以上仅确认一个账号及库存样本的端到端成功，不代表所有账号、库存规模均已通过验收。
 
-`captures/` remains local but contains sensitive account/session traffic and decoded inventory
-intermediates. Do not upload or share it. Only the EXE, ZIP, checksum file, and public source belong
-in a GitHub release.
+## 使用流程
 
-## Known Limitations
+1. 解压 ZIP 到独立目录，以管理员身份打开 PowerShell 并进入该目录。
+2. 打开游戏，停在登录／开始游戏页面，先不要进入游戏世界。
+3. 执行：
 
-- Protocol support is version-specific and currently verified only for `CNPRODWin3.1.0`.
-- The executable is not digitally signed, so Windows may show a SmartScreen warning.
-- A changed drive-disc inventory normally requires a new pair of login captures.
+   ```powershell
+   .\zzz-drive-exporter.exe
+   ```
 
-SHA-256 hashes are provided in `SHA256SUMS.txt`.
+4. 等待终端出现 `Capture started`，再手动登录进入游戏世界。
+5. 等待自动停止抓包与导出，正常流程不要按 `Ctrl+C`。
+6. 从程序启动时的工作目录下 `exports/` 选择相应 JSON 导入配装工具。
+
+单抓包成功会显示 `完成：单次抓包恢复并导出 ...`；出现 `配对会话（回退路径）` 则不是单抓包成功。
+如果程序请求第二次登录，可选择按提示使用旧回退流程，不必将其误认为本次单抓包验收通过。
+
+## 下载选择
+
+- **ZIP（推荐）**：包含可执行文件、使用说明、更新日志和许可证。
+- **EXE**：独立可执行文件。
+- **SHA256SUMS.txt**：上述 EXE 与 ZIP 的 SHA-256 校验值。
+
+GitHub 自动生成的 Source code ZIP/TAR 是源码归档，不是预编译程序包。
+
+## 要求与已知限制
+
+- Windows 10/11 x86_64，需要管理员权限使用 Windows `pktmon`。
+- 当前现场抓包的自动停止条件只针对 CN 3.2 的 `0x0F5D`；保留旧版本离线 schema 不代表旧版本现场抓包受支持。
+- 换号、库存增减和小库存场景尚未完成受控验收；短响应可能不足以支持统计恢复。
+- 本次 CN 3.2 样本尚未完成游戏界面逐字段核对，以及两款目标软件的导入验收。
+- 当前没有自动超时；若目标响应始终不出现，可按一次 `Ctrl+C` 中止并保留本地抓包排查，中止产物可能不完整。
+- 游戏协议、套装和目标导入格式变化可能需要更新程序。
+- 可执行文件没有数字签名。
+- 本次附件沿用用户运行成功的现有 release EXE；本轮未重新运行测试或干净构建，尚未完成标签源码与二进制的可复现构建验证。
+
+## 数据隐私
+
+程序不注入游戏、不读取游戏进程内存、不修改流量、不自动操作游戏，也不上传抓包数据。
+`captures/` 中的会话消息、pad/seed 与库存，以及 `exports/` 中的账号库存均应保留在本机，切勿作为发布附件上传。

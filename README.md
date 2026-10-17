@@ -1,16 +1,27 @@
 # zzz-drive-exporter
 
 Windows command-line tool that passively captures Zenless Zone Zero login traffic and exports
-drive discs as optimizer-compatible `ZOOD v1` JSON.
+the decoded Drive Disc inventory to two import-ready JSON formats:
+
+- `ZOOD v1` for [Zenless Optimizer](https://frzyc.github.io/zenless-optimizer/#/discs)
+- `zzz-calculator-drive-disc-export` v1 for
+  [zzz_calculator](https://github.com/ZztIsolation/zzz_calculator)
 
 The executable does not inject into the game, read process memory, modify traffic, automate input,
 or upload captured data. It uses Windows `pktmon`, so it must run from an elevated terminal.
 
 ## Supported Version
 
-The current decoder is verified for the Chinese PC client `CNPRODWin3.1.0`. Protocol command IDs,
-protobuf fields, and XOR constants can change after a game update. Old-version compatibility is not
-a release goal; each release targets the current verified game version.
+The current live-capture target is the Chinese PC client `CNPRODWin3.2.0`, using drive-disc
+response command `0x0F5D`. On 2026-10-18 (Asia/Shanghai), a user-operated login capture automatically
+stopped at a complete 145,929-byte response and exported 2,321 discs through the single-session
+path. Both JSON outputs contain 2,321 records; no paired-session fallback was reported.
+
+This is one confirmed full-inventory sample, not a guarantee for every account or inventory size.
+Account switching, changed inventories, and small inventories still need controlled acceptance.
+Historical CN 3.0/3.1 offline decoding remains in the source, but the live capture stop condition
+currently targets CN 3.2 only. Protocol command IDs, protobuf fields, and XOR constants can change
+after a game update.
 
 ## Download
 
@@ -29,24 +40,35 @@ cd C:\path\to\zzz-drive-exporter
 3. Wait for `Capture started`, then log in and enter the game.
 4. Do not press `Ctrl+C`. The first capture stops automatically after the complete drive-disc
    response arrives.
-5. If no compatible historical capture exists, the program remains open and asks for a second
-   login. Keep the drive-disc inventory unchanged, completely exit and restart the game, and wait
-   at the login screen.
-6. Return to the exporter and press `Enter`. After the second `Capture started`, log in again.
-7. The importer-ready file is written to `exports/zzz-drives-*.json`.
+5. The exporter first attempts to recover the session pad from this single response. If the
+   statistical candidate passes MT19937-64 recurrence and protobuf/inventory parsing, both files
+   are written immediately. This path does not use an earlier account or inventory baseline, but
+   success on account changes, inventory changes, and small inventories is not yet established.
+6. Only if single-session recovery cannot be validated does it search for, or request, a second
+   unchanged-inventory login session and use the historical paired method as a fallback.
 
-Each login uses a different session pad. A fresh installation therefore normally needs two login
-captures with the same account, game version, and unchanged drive-disc inventory. A historical
-capture can replace the first capture only when its inventory response is byte-identical.
+Each login uses a different session pad. The old paired method remains available as a fallback,
+but the normal path is one login capture and does not assume a matching account, unchanged
+inventory, or historical plaintext template.
 
-Changes such as obtaining, deleting, leveling, dismantling, locking, unlocking, or re-equipping a
-drive disc can invalidate an older baseline. If the inventory changes, complete another two-login
-pair without making changes between those two logins.
+For the paired fallback only, changes such as obtaining, deleting, leveling, dismantling, locking,
+unlocking, or re-equipping a drive disc can invalidate an older baseline. If you choose that
+fallback, keep the account, game version, and inventory unchanged between its two logins.
+
+There is currently no capture timeout. If the expected response never arrives, press `Ctrl+C` once
+to interrupt and retain the local capture for diagnosis. Interrupted captures may be incomplete;
+interrupting is not the normal successful completion path.
 
 ## Output
 
-- `exports/*.json`: final `ZOOD v1` document for Zenless Optimizer.
+- `exports/zzz-drives-zood-v1.json`: `ZOOD v1` for Zenless Optimizer.
+- `exports/zzz-drives-zzz-calculator-v1.json`: native version 1 Drive Disc export for
+  `ZztIsolation/zzz_calculator`.
 - `captures/*`: reassembled login messages and local decryption intermediates used for pairing.
+
+The two default JSON files are current-inventory snapshots. A later successful run replaces both
+files. Each custom path is protected independently and needs `--force` if that file already exists.
+Use `--output` and `--calculator-output` to choose custom paths.
 
 Do not publish `captures/`. It contains network endpoints, complete reassembled messages, session
 pads/seeds after pairing, and the decoded inventory. The final export does not contain a password
@@ -68,22 +90,28 @@ The executable is created at:
 target/release/zzz-drive-exporter.exe
 ```
 
-Process an existing exporter capture pair without starting `pktmon`:
+Process an existing exporter capture without starting `pktmon` (omit `--baseline` so the
+single-session path is attempted first):
 
 ```powershell
 .\target\release\zzz-drive-exporter.exe `
   --from-capture captures\<current> `
-  --baseline captures\<baseline> `
-  --output exports\test.json
+  --output exports\test-zood-v1.json `
+  --calculator-output exports\test-zzz-calculator-v1.json
 ```
+
+To explicitly use the historical paired fallback instead, add `--baseline captures\<baseline>`.
+That option bypasses the single-session attempt.
 
 ## Project Layout
 
-- `src/main.rs`: end-user two-login workflow and CLI.
-- `src/export_api.rs`: live capture orchestration, baseline discovery, and ZOOD conversion.
+- `src/main.rs`: single-login-first CLI with an optional two-login fallback.
+- `src/export_api.rs`: live capture orchestration, baseline discovery, and both JSON conversions.
 - `src/core.rs`: verified KCP, command, pad-validation, and drive-disc decoder core.
 - `src/session_pad.rs`: MT19937-64 session-pad recovery.
-- `resources/zzz_cn31_disc_sets.json`: optimizer set-key mapping for the supported version.
+- `resources/zzz_cn31_disc_sets.json`: Zenless Optimizer and zzz_calculator set mappings for the
+  supported version.
+- `PLAN.md`, `TASKS.md`, `DECISIONS.md`: concise maintainer context for the next version update.
 - `RELEASING.md`: maintainer release checklist.
 
 ## Disclaimer

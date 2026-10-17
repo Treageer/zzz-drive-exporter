@@ -19,6 +19,7 @@ use tracing::{debug, info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod session_pad;
+mod single_pad;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -1326,7 +1327,7 @@ struct EquipSchema {
     property_count_xor: u64,
 }
 
-const EQUIP_SCHEMAS: [EquipSchema; 2] = [
+const EQUIP_SCHEMAS: [EquipSchema; 3] = [
     EquipSchema {
         name: "CNPRODWin3.0.0",
         command_id: 0x1E40,
@@ -1378,6 +1379,32 @@ const EQUIP_SCHEMAS: [EquipSchema; 2] = [
         property_key_xor: 8130,
         property_base_xor: 529,
         property_count_xor: 14928,
+    },
+    EquipSchema {
+        name: "CNPRODWin3.2.0",
+        command_id: 0x0F5D,
+        equip_list_field: 5,
+        suit_ids_field: 3,
+        fallback_suit_ids_field: 11,
+        star_field: 15,
+        level_field: 1,
+        item_id_field: 6,
+        uid_field: 14,
+        lock_field: 7,
+        marked_field: None,
+        unresolved_scalar_field: 5,
+        unresolved_bool_fields: &[],
+        main_property_field: 9,
+        sub_property_field: 4,
+        property_key_field: 3,
+        property_base_field: 13,
+        property_count_field: 7,
+        star_xor: 975,
+        level_xor: 14782,
+        item_id_xor: 10045,
+        property_key_xor: 3263,
+        property_base_xor: 2174,
+        property_count_xor: 16373,
     },
 ];
 
