@@ -35,3 +35,22 @@
 
 The earlier v0.2 dual-export verification checklist is historical and is not evidence of a new
 CN 3.2 test run. No tests, builds, or live captures were run during this preparation pass.
+
+## CN 3.3 Current-Version Repair - 2026-10-21
+
+- [x] Confirm installed CNPRODWin3.3.0 from version_info and config.ini (read-only).
+- [x] Locate user-operated capture; current binary waits for stale CN 3.2 command 0x0F5D.
+- [x] Identify the current drive-disc response and exact schema/XOR constants.
+- [x] Preserve a bounded snapshot of already captured messages; do not start live capture.
+- [x] Update current-version stop condition, decoder, and statistical prior only.
+- [x] Validate the saved current-session response offline without historical pads/templates.
+- [x] Build a separate repaired executable when needed; do not replace the running old file.
+- [ ] User manually verifies one fresh login and checks the exported inventory.
+
+Scope: current CN 3.3 only; no future-version autodetection or broad compatibility framework.
+Do not operate the game, start capture, or run the full test suite in this pass.
+
+本轮结果：CN 3.3 / 0x06D0，144264 字节，2335 条。独立初始快照不含 pad／明文／库存，
+单会话恢复 MT 200/200，两个格式的 UID、等级、部位、锁定一致。恢复后才作历史身份比对：
+对旧版输出 UID 去除 3.2 的传输混淆后，2321 条共同物品 ID 与等级全部一致，新增 14 条。
+旧版锁定读取本来全为 false，不能作为当前锁定语义的真值；需游戏抽查。

@@ -12,16 +12,16 @@ or upload captured data. It uses Windows `pktmon`, so it must run from an elevat
 
 ## Supported Version
 
-The current live-capture target is the Chinese PC client `CNPRODWin3.2.0`, using drive-disc
-response command `0x0F5D`. On 2026-10-18 (Asia/Shanghai), a user-operated login capture automatically
-stopped at a complete 145,929-byte response and exported 2,321 discs through the single-session
-path. Both JSON outputs contain 2,321 records; no paired-session fallback was reported.
+The current live-capture target is the Chinese PC client `CNPRODWin3.3.0`, using drive-disc
+response command `0x06D0` (v0.2.1). CN 3.2's old `0x0F5D` stop condition no longer matches.
+On 2026-10-21, the repaired decoder recovered the pad from one already-captured complete
+144,264-byte response and exported 2,335 discs to both formats without historical pad/plaintext
+inputs or paired fallback. A fresh live capture with the repaired EXE still needs user verification.
 
-This is one confirmed full-inventory sample, not a guarantee for every account or inventory size.
-Account switching, changed inventories, and small inventories still need controlled acceptance.
-Historical CN 3.0/3.1 offline decoding remains in the source, but the live capture stop condition
-currently targets CN 3.2 only. Protocol command IDs, protobuf fields, and XOR constants can change
-after a game update.
+This release only adapts the current version; it does not add future-version detection.
+Small inventories and target-application imports are not broadly accepted. Historical schemas
+remain for offline use; current live capture targets CN 3.3 only. Protocol updates may require
+another targeted repair.
 
 ## Download
 

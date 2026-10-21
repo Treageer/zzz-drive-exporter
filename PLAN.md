@@ -23,3 +23,9 @@ The remote currently has `v0.1.0`; v0.2.0 includes the pending dual-export chang
   test suite, rebuild, or clean-checkout reproducibility run is authorized in this pass.
 - Before publication: review the exact source diff, complete or explicitly defer verification
   gates, commit/tag the intended source, and ensure the asset corresponds to that source.
+
+## 2026-10-21 当前修复目标
+
+仅适配 CNPRODWin3.3.0，沿用已实现的单会话算法，不设计未来版本兼容框架。
+已有用户抓包可用于离线验收；新现场抓包由用户手动完成。
+本轮允许针对性构建和离线当前样本检查，不启动游戏／抓包，不运行完整测试套件。

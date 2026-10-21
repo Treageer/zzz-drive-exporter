@@ -67,3 +67,15 @@ asset upload, and final publication. Do not execute a remote write in this pass.
 Consequences: Keep the machine-specific publishing runbook in ignored dist/v0.2.0, not public
 source. Keep release notes explicit that the existing user-run executable was packaged without
 a new test/build or clean-source reproducibility check. No code/runtime behavior is changed.
+
+## 2026-10-21 - 只适配当前 CN 3.3，先用已有抓包验收
+
+背景：客户端已更新为 CNPRODWin3.3.0，旧程序等待 CN 3.2 命令 0x0F5D。
+用户已有抓包包含完整 0x06D0 长响应，不能把未自动停止简单归因于 pktmon 丢包警告。
+
+决策：更新当前 stop condition、schema 与统计先验；公开协议定义只作为候选来源，
+以已捕获正文的递推、完整解析与域约束为验收依据。CN 实际状态字段及套装列表
+与参考定义存在差别，按抓包校准；UID 用当前 XOR 常量还原。
+
+影响：通过单会话无旧资产输入的离线导出，不启动新抓包。新二进制独立命名，
+不替换仍运行的旧 EXE；自动停止和字段含义最终仍需用户手动现场确认。

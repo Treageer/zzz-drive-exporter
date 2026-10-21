@@ -54,7 +54,8 @@ pub async fn capture_until_current_equip(output_root: &Path) -> Result<PathBuf> 
     info!("starting continuous UDP capture");
     info!("capture directory: {}", run_dir.display());
     info!(
-        "waiting for complete drive-disc response command 0x{:04X}",
+        "waiting for {} drive-disc response command 0x{:04X}",
+        schema.name,
         schema.command_id
     );
 
@@ -168,6 +169,8 @@ pub async fn capture_until_current_equip(output_root: &Path) -> Result<PathBuf> 
                         "preview_hex": hex::encode(&message[..message.len().min(32)]),
                     })
                 )?;
+                // Keep completed messages usable even if the user interrupts a stale capture.
+                message_manifest.flush()?;
                 if envelope.command_id == schema.command_id && envelope.body.len() >= 8192 {
                     target_seen = true;
                     info!(
@@ -245,24 +248,26 @@ pub fn process_exporter_capture(
     replace_calculator: bool,
 ) -> Result<ExporterOutcome> {
     prepare_exporter_capture(run_dir)?;
-    if explicit_baseline.is_none()
-        && let Ok((_pad_path, equip_json, disc_count)) = single_session_export(
+    if explicit_baseline.is_none() {
+        match single_session_export(
             run_dir,
             zood_output,
             calculator_output,
             replace_zood,
             replace_calculator,
-        )
-    {
-            return Ok(ExporterOutcome::ExportedSingleSession {
-                capture: run_dir.to_path_buf(),
-                equip_json,
-                zood_json: zood_output.to_path_buf(),
-                calculator_json: calculator_output.to_path_buf(),
-                disc_count,
-            });
+        ) {
+            Ok((_pad_path, equip_json, disc_count)) => {
+                return Ok(ExporterOutcome::ExportedSingleSession {
+                    capture: run_dir.to_path_buf(),
+                    equip_json,
+                    zood_json: zood_output.to_path_buf(),
+                    calculator_json: calculator_output.to_path_buf(),
+                    disc_count,
+                });
+            }
+            Err(error) => warn!("single-session export did not complete: {error:#}"),
+        }
     }
-
     let candidates = baseline_candidates(run_dir, capture_root, explicit_baseline)?;
     let attempted_baselines = candidates.len();
 
@@ -359,6 +364,7 @@ fn single_session_export(
         (single_pad::EquipPrior::cn30(), 0x1E40_u16, EQUIP_SCHEMAS[0]),
         (single_pad::EquipPrior::cn31(), 0x11B0_u16, EQUIP_SCHEMAS[1]),
         (single_pad::EquipPrior::cn32(), 0x0F5D_u16, EQUIP_SCHEMAS[2]),
+        (single_pad::EquipPrior::cn33(), 0x06D0_u16, EQUIP_SCHEMAS[3]),
     ] {
         let Some(row) = rows
             .iter()
@@ -377,9 +383,18 @@ fn single_session_export(
             continue;
         }
         let plain = xor_with_pad(&cipher, &evidence.pad);
-        if parse_get_equip_data_sc_rsp(&plain, &schema).is_err() {
+        let parsed = match parse_get_equip_data_sc_rsp(&plain, &schema) {
+            Ok(parsed) if !parsed.equip_list.is_empty() => parsed,
+            _ => continue,
+        };
+        if let Err(error) = validate_equip_decode(&parsed, &schema) {
+            warn!("{} inventory validation rejected the candidate: {error:#}", schema.name);
             continue;
         }
+        info!(
+            "single-session {} pad MT recurrence {}/{}; inventory {} discs validated",
+            schema.name, recurrence.hits, recurrence.total, parsed.equip_list.len()
+        );
         fs::create_dir_all(&pad_dir)?;
         fs::write(&pad_path, evidence.pad)?;
         recovered = true;

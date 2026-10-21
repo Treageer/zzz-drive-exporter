@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 - 2026-10-21
+
+- Adapt the live stop condition, protobuf schema and synthetic pad-recovery prior to
+  CNPRODWin3.3.0 / `0x06D0`.
+- Use the full suit-ID list and captured CN field layout; decode the current UID XOR constant.
+- Flush completed-message manifest entries and expose single-session failures instead of
+  silently presenting every failure as a need for a second session.
+- Validate pad recurrence and inventory before saving a successful single-session candidate.
+- Recover 2,335 discs from one complete 144,264-byte current-session response offline.
+- Fresh live capture and in-game field checks remain manual acceptance steps.
+
 ## 0.2.0 - 2026-10-18
 
 - Prefer one-session pad recovery from the long drive-disc response, with MT19937-64 and strict

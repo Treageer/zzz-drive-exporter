@@ -90,6 +90,28 @@ impl EquipPrior {
             count_xor: 16373,
         }
     }
+    /// Current CN 3.3 schema, verified against a complete captured inventory.
+    pub fn cn33() -> Self {
+        Self {
+            list_field: 12,
+            level_field: 14,
+            level_xor: 15335,
+            item_field: 1,
+            item_xor: 16056,
+            uid_field: 9,
+            lock_field: 12,
+            star_field: 7,
+            star_xor: 7223,
+            main_field: 4,
+            sub_field: 8,
+            key_field: 15,
+            key_xor: 11012,
+            base_field: 11,
+            base_xor: 576,
+            count_field: 6,
+            count_xor: 8102,
+        }
+    }
 }
 
 fn varint(mut value: u64) -> Vec<u8> {

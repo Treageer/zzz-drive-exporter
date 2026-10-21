@@ -1310,6 +1310,7 @@ struct EquipSchema {
     level_field: u32,
     item_id_field: u32,
     uid_field: u32,
+    uid_xor: u64,
     lock_field: u32,
     marked_field: Option<u32>,
     unresolved_scalar_field: u32,
@@ -1327,7 +1328,7 @@ struct EquipSchema {
     property_count_xor: u64,
 }
 
-const EQUIP_SCHEMAS: [EquipSchema; 3] = [
+const EQUIP_SCHEMAS: [EquipSchema; 4] = [
     EquipSchema {
         name: "CNPRODWin3.0.0",
         command_id: 0x1E40,
@@ -1338,6 +1339,7 @@ const EQUIP_SCHEMAS: [EquipSchema; 3] = [
         level_field: 12,
         item_id_field: 13,
         uid_field: 6,
+        uid_xor: 0,
         lock_field: 10,
         marked_field: Some(15),
         unresolved_scalar_field: 7,
@@ -1364,6 +1366,7 @@ const EQUIP_SCHEMAS: [EquipSchema; 3] = [
         level_field: 1,
         item_id_field: 3,
         uid_field: 6,
+        uid_xor: 0,
         lock_field: 4,
         marked_field: None,
         unresolved_scalar_field: 10,
@@ -1390,6 +1393,7 @@ const EQUIP_SCHEMAS: [EquipSchema; 3] = [
         level_field: 1,
         item_id_field: 6,
         uid_field: 14,
+        uid_xor: 0,
         lock_field: 7,
         marked_field: None,
         unresolved_scalar_field: 5,
@@ -1405,6 +1409,33 @@ const EQUIP_SCHEMAS: [EquipSchema; 3] = [
         property_key_xor: 3263,
         property_base_xor: 2174,
         property_count_xor: 16373,
+    },
+    EquipSchema {
+        name: "CNPRODWin3.3.0",
+        command_id: 0x06D0,
+        equip_list_field: 12,
+        suit_ids_field: 9,
+        fallback_suit_ids_field: 8,
+        star_field: 7,
+        level_field: 14,
+        item_id_field: 1,
+        uid_field: 9,
+        uid_xor: 1216,
+        lock_field: 12,
+        marked_field: None,
+        unresolved_scalar_field: 10,
+        unresolved_bool_fields: &[5],
+        main_property_field: 4,
+        sub_property_field: 8,
+        property_key_field: 15,
+        property_base_field: 11,
+        property_count_field: 6,
+        star_xor: 7223,
+        level_xor: 15335,
+        item_id_xor: 16056,
+        property_key_xor: 11012,
+        property_base_xor: 576,
+        property_count_xor: 8102,
     },
 ];
 
@@ -1457,7 +1488,7 @@ fn parse_equip_info(data: &[u8], schema: &EquipSchema) -> Result<EquipInfoDecode
             out.sub_properties
                 .push(parse_equip_property(reader.read_len_bytes()?, schema)?);
         } else if field_number == schema.uid_field && wire_type == 0 {
-            out.uid = reader.read_varint()? as u32;
+            out.uid = (reader.read_varint()? ^ schema.uid_xor) as u32;
         } else if field_number == schema.unresolved_scalar_field && wire_type == 0 {
             out.unresolved_scalar_raw = Some(reader.read_varint()?);
         } else if field_number == schema.lock_field && wire_type == 0 {
